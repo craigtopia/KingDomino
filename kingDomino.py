@@ -11,6 +11,8 @@ for i in range(9):
         # Number gridpoints with integers
         COORD_MAP.update({(j, i): i * 9 + j})
 
+REV_COORD_MAP = {v: k for k,v in COORD_MAP.items()}
+
 
 class Side(object):
 
@@ -66,6 +68,7 @@ class Board(object):
         self.jMin = None
         self.Edges = []
         self.Graph = {}
+        self.connected_components = []
 
     def __getitem__(self, ij):
         return self.B[ij]
@@ -200,6 +203,11 @@ class Board(object):
         return False
 
     def check_move_validity(self, move):
+        if (move.i, move.j) in self.B.keys():
+            return False
+        if (move.i2, move.j2) in self.B.keys():
+            return False
+
         castle_adjacency = self.check_castle_adjacency(move)
         ext_edge_formation = self.check_external_edge_formation(move)
         within_width_limit = self.check_max_min(move)
@@ -210,6 +218,38 @@ class Board(object):
             if ext_edge_formation:
                 return True
         return False
+
+    def find_connected_components(self):
+        connected_components = []
+        for key in self.Graph.keys():
+            for group in connected_components:
+                if key in group:
+                    break
+            else:
+                connected_components += [self.dfs(self.Graph, key)]
+        self.connected_components = connected_components
+
+    def dfs(self, graph, start, visited=None):
+        # Depth-first search for finding connected components to start node
+        if visited is None:
+            visited = set()
+        visited.add(start)
+
+        for nxt in graph[start] - visited:
+            visited.add(nxt)
+            self.dfs(graph, nxt, visited)
+        return visited
+
+    def score_kings(self):
+        total_score = 0
+        for comp in self.connected_components:
+            k = 0
+            for c in comp:
+                side = self.B[REV_COORD_MAP[c]]
+                k += side.kings
+            component_score = k * len(comp)
+            total_score += component_score
+        return total_score
 
 
 class Move(object):
@@ -225,12 +265,16 @@ class Move(object):
         self.j2 = j + Dj
 
 
+
+
+
 myField = Side(0, 'wheat')
-myWater = Side(0, 'water')
+myWater = Side(1, 'water')
 myDom = Domino(myField, myWater, 1)
 
-myMove = Move(myDom, myDom.side_a, 3, 4, -1, 0)
-myMove2 = Move(myDom, myDom.side_a, 3, 5, -1, 0)
+myMove = Move(myDom, myDom.side_a, 5, 4, 1, 0)
+myMove2 = Move(myDom, myDom.side_a, 5, 5, 1, 0)
+myMove3 = Move(myDom, myDom.side_a, 7, 6, -1, 0)
 myBoard = Board()
 
 print('M1 valid: ', myBoard.check_move_validity(myMove))
@@ -241,7 +285,15 @@ print('int edge: ', myBoard.check_internal_edge(myMove2))
 
 print('M2 valid: ', myBoard.check_move_validity(myMove2))
 myBoard.assign_domino(myMove2)
+
+print('M3 valid: ', myBoard.check_move_validity(myMove3))
+myBoard.assign_domino(myMove3)
+
 print(myBoard.B.keys())
 
 print(myBoard.Edges)
 print(myBoard.Graph)
+myBoard.find_connected_components()
+print(myBoard.connected_components)
+print(myBoard.score_kings())
+
