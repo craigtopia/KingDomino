@@ -1,9 +1,10 @@
-TERRAINS = ['wheat', 'water', 'forest', 'cave', 'wasteland', 'sheep']
+TERRAINS = ['wheat', 'water', 'forest', 'cave', 'wasteland', 'sheep', 'castle']
 MAXWIDTH = 5
 CASTLE_COORDS = (4, 4)
 CASTLE_ADJ_COORDS = [(4, 3), (4, 5), (3, 4), (5, 4)]
 
 COORD_MAP = {}
+
 for i in range(9):
     for j in range(9):
         # Number gridpoints with integers
@@ -22,10 +23,10 @@ class Side(object):
 
     def __eq__(self, other):
         assert isinstance(other, Side), 'Invalid comparison.'
-        if self.kings == other.kings:
-            if self.terrain == other.terrain:
-                return True
-        return False
+        equal = True
+        equal &= self.kings == other.kings
+        equal &= self.terrain == other.terrain
+        return equal
 
     def __ne__(self, other):
         assert isinstance(other, Side), 'Invalid comparison.'
@@ -36,6 +37,9 @@ class Side(object):
     def __repr__(self):
         return self.terrain + ', k=' + str(self.kings)
 
+    def __hash__(self):
+        return hash((self.kings, self.terrain))
+
 
 class Domino(object):
 
@@ -43,6 +47,9 @@ class Domino(object):
         self.one_side = one_side
         self.other_side = other_side
         self.number = number
+
+    def __hash__(self):
+        return hash((self.one_side, self.other_side))
 
     def __repr__(self):
         return 'A: ' + self.one_side.terrain + ', k=' + str(self.one_side.kings) + \
@@ -53,6 +60,25 @@ class Domino(object):
         if item == 0:
             return self.one_side
         return self.other_side
+    
+    def __eq__(self, other):
+        """
+        Will consider like Dominos equal even if their numbers are different.
+        """
+        assert isinstance(other, Domino)
+        equal = True
+        if self.one_side == other.one_side:
+            if self.other_side == other.other_side:
+                return True
+        if self.one_side == other.other_side:
+            if self.other_side == other.one_side:
+                return True
+        return False
+
+    def __ne__(self, other):
+        if self.__eq__(other):
+            return False
+        return True
 
     def get_other_side(self, side):
         if side == self.one_side:
@@ -65,7 +91,7 @@ class Domino(object):
 
 class Board(object):
     def __init__(self):
-        self.B = {}
+        self.B = {}  # collection of sides, keyed by (i, j) tuple of integers
         self.iMax = None
         self.iMin = None
         self.jMax = None
@@ -73,15 +99,42 @@ class Board(object):
         self.Edges = []
         self.Graph = {}
         self.connected_components = []
+        self.castle_adj_coords = []
+        self.castle_coords = ()
+        self.place_castle()
+
+    def place_castle(self, castle_coords=(4, 4)):
+        self.castle_coords = castle_coords
+        self.B[castle_coords] = Side(kings=0, terrain='castle')
+        for iBump, jBump in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+            self.castle_adj_coords += [(castle_coords[0] + iBump, castle_coords[1] + jBump)]
 
     def __getitem__(self, ij):
         return self.B[ij]
 
+    def undo_move(self, move):
+        #  TODO: Need to remove edge list or junk edge list entirely
+        #  TODO: This function entirely untested. Use at your own risk!
+        self.B.pop(move.i, move.j)
+        self.B.pop(move.i2, move.j2)
+        self.update_max_min()
+        positions = [move.i, move.j, move.i2, move.j2]
+        for p in positions:
+            if p in self.Graph.keys():
+                self.Graph.pop(p)
+        for k in self.Graph.keys():
+            vals = set()
+            for v in self.Graph[k]:
+                if v not in positions:
+                    vals.add(v)
+            self.Graph[k] = vals
+
     def assign_domino(self, move):
         if self.check_move_validity(move):
             self.B[move.i, move.j] = move.side_a
-            self.B[move.i + move.Di, move.j + move.Dj] = move.side_b
+            self.B[move.i2, move.j2] = move.side_b
             self.record_external_edge_formation(move)
+            self.update_max_min(move)
             if move.side_a.terrain == move.side_b.terrain:
                 # Record internal edge if both sides of domino have same terrain
                 edge = (COORD_MAP[move.i, move.j], COORD_MAP[move.i2, move.j2])
@@ -126,43 +179,73 @@ class Board(object):
             if m2 not in self.Graph.keys():
                 self.Graph.update({m2: set()})
 
+    def update_max_min(self, move=None):
+        if move is not None:
+            if self.iMax is None:
+                self.iMax = max(move.i, move.i2)
+            else:
+                self.iMax = max(self.iMax, move.i, move.i2)
+
+            if self.jMax is None:
+                self.jMax = max(move.j, move.j2)
+            else:
+                self.jMax = max(self.jMax, move.j, move.j2)
+
+            if self.iMin is None:
+                self.iMin = min(move.i, move.i2)
+            else:
+                self.iMin = min(self.iMin, move.i, move.i2)
+
+            if self.jMin is None:
+                self.jMin = min(move.j, move.j2)
+            else:
+                self.jMin = min(self.jMin, move.j, move.j2)
+        else:
+            # Figure out from existing board
+            i_s = [x[0] for x in self.B.keys()]
+            j_s = [x[1] for x in self.B.keys()]
+
+            self.iMax = max(i_s)
+            self.jMax = max(j_s)
+
+            self.iMin = min(i_s)
+            self.jMin = min(j_s)
+
     def check_max_min(self, move):
         # Make sure the move doesn't expand board too wide/long.
-        i2 = move.i + move.Di
-        j2 = move.j + move.Dj
 
         if self.iMax is None:
-            iMax = max(move.i, i2)
+            iMax = max(move.i, move.i2)
         else:
-            iMax = max(self.iMax, move.i, i2)
+            iMax = max(self.iMax, move.i, move.i2)
 
         if self.jMax is None:
-            jMax = max(move.j, j2)
+            jMax = max(move.j, move.j2)
         else:
-            jMax = max(self.jMax, move.j, j2)
+            jMax = max(self.jMax, move.j, move.j2)
 
         if self.iMin is None:
-            iMin = min(move.i, i2)
+            iMin = min(move.i, move.i2)
         else:
-            iMin = max(self.iMin, move.i, i2)
+            iMin = min(self.iMin, move.i, move.i2)
 
         if self.jMin is None:
-            jMin = min(move.j, j2)
+            jMin = min(move.j, move.j2)
         else:
-            jMin = min(self.jMin, move.j, j2)
+            jMin = min(self.jMin, move.j, move.j2)
 
         if iMax - iMin >= MAXWIDTH:
             return False
+
         if jMax - jMin >= MAXWIDTH:
             return False
 
         return True
 
-    @staticmethod
-    def check_castle_adjacency(move):
-        if (move.i, move.j) in CASTLE_ADJ_COORDS:
+    def check_castle_adjacency(self, move):
+        if (move.i, move.j) in self.castle_adj_coords:
             return True
-        if (move.i2, move.j2) in CASTLE_ADJ_COORDS:
+        if (move.i2, move.j2) in self.castle_adj_coords:
             return True
         return False
 
@@ -217,6 +300,14 @@ class Board(object):
         return False
 
     def check_move_validity(self, move):
+        if move.i < 0 or move.i2 < 0:
+            return False
+        if move.j < 0 or move.j2 < 0:
+            return False
+        if move.i > 8 or move.i2 > 8:
+            return False
+        if move.j > 8 or move.j2 > 8:
+            return False
         if (move.Di == 0) and (move.Dj == 0):
             return False
         if max(move.Di, move.Dj) > 1:
@@ -227,15 +318,15 @@ class Board(object):
             return False
         if (move.i2, move.j2) in self.B.keys():
             return False
+        if (move.i, move.j) == (4, 4):
+            return False
+        if (move.i2, move.j2) == (4, 4):
+            return False
 
-        castle_adjacency = self.check_castle_adjacency(move)
-        ext_edge_formation = self.check_external_edge_formation(move)
-        within_width_limit = self.check_max_min(move)
-
-        if within_width_limit:
-            if castle_adjacency:
+        if self.check_max_min(move):
+            if self.check_castle_adjacency(move):
                 return True
-            if ext_edge_formation:
+            if self.check_external_edge_formation(move):
                 return True
         return False
 
@@ -272,6 +363,26 @@ class Board(object):
             total_score += component_score
         return total_score
 
+    def get_feasible_move_set(self, domino):
+        """
+        Returns all moves that are valid, given self and domino
+        """
+        assert isinstance(domino, Domino), 'Please pass a king domino domino object.'
+
+        feasible_set = set()
+        for coords, side in self.B.items():
+            i_existing = coords[0]
+            j_existing = coords[1]
+            for iBump, jBump in [(1, 0), (-1, 0), (0, 1), (0, -1)]:  # Test all adjacencies to each side
+
+                i = i_existing + iBump
+                j = j_existing + jBump
+                for Di, Dj in [(1, 0), (-1, 0), (0, 1), (0, -1)]:  # Test all rotations
+                    candidate_move = Move(domino, 0, i, j, Di, Dj)
+                    if self.check_move_validity(candidate_move):
+                        feasible_set.add(candidate_move)
+        return feasible_set
+
 
 class Move(object):
 
@@ -280,13 +391,37 @@ class Move(object):
         # side_b goes in spot (i + Di, j + Dj)
         self.domino = domino
         self.side_a = domino[first_side]
-        self.side_b = domino.get_other_side(self.side_a)
+        self.side_b = domino[0 if first_side else 1]
         self.i = i
         self.j = j
         self.Di = Di
         self.Dj = Dj
         self.i2 = i + Di
         self.j2 = j + Dj
+    
+    def __eq__(self, other):
+        assert isinstance(other, Move), 'Invalid comparison.'
+        equal = True
+        equal &= self.domino == other.domino
+        equal &= self.i == other.i
+        equal &= self.j == other.j
+        equal &= self.Di == other.Di
+        equal &= self.Dj == other.Dj
+        equal &= self.i2 == other.i2
+        equal &= self.j2 == other.j2
+        return equal
+    
+    def __ne__(self, other):
+        if self.__eq__(other):
+            return False
+        return True
+
+    def __hash__(self):
+        return hash((self.side_a, self.side_b, self.i, self.j, self.Di, self.Dj))
+
+    def __repr__(self):
+        return '(i , j ): (%d, %d) - %s \t(i2, j2): (%d, %d) - %s\n' % (self.i, self.j, self.side_a.terrain,
+                                                                         self.i2, self.j2, self.side_b.terrain)
 
 
 if __name__ == '__main__':
