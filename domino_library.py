@@ -1,5 +1,5 @@
 from kingDomino import Side, Domino
-TERRAINS = ['wheat', 'water', 'forest', 'cave', 'wasteland', 'sheep']
+TERRAINS = ['wheat', 'water', 'forest', 'cave', 'wasteland', 'sheep', 'castle']
 DOMINO_LIB = [
 Domino(Side(kings=0, terrain='wheat'), Side(kings=0, terrain='wheat'), 1),
 Domino(Side(kings=0, terrain='wheat'), Side(kings=0, terrain='wheat'), 2),
@@ -50,3 +50,4 @@ Domino(Side(kings=0, terrain='wasteland'), Side(kings=2, terrain='cave'), 46),
 Domino(Side(kings=0, terrain='wasteland'), Side(kings=2, terrain='cave'), 47),
 Domino(Side(kings=0, terrain='wheat'), Side(kings=3, terrain='cave'), 48),
 ]
+
