@@ -2,8 +2,11 @@ import kingDomino as kD
 import copy
 from domino_library import DOMINO_LIB
 
+MAX_SCORE = 0
+
 
 def sera(Dominos, board, visited=None):
+    global MAX_SCORE
 
     if visited is None:
         visited = set()
@@ -18,7 +21,9 @@ def sera(Dominos, board, visited=None):
                 sera(Dominos, bc, visited)
             visited.remove(d)
     score = board.score_kings()
-    if score > 60:
+
+    if score > MAX_SCORE:
+        MAX_SCORE = score
         print(score, board.B)
     return
 
