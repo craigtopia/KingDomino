@@ -1,3 +1,11 @@
+from functools import partial
+from pandas import DataFrame
+from os import cpu_count
+from multiprocessing import Pool, Process, Queue, Manager
+import time
+import random
+import copy
+
 TERRAINS = ['wheat', 'water', 'forest', 'cave', 'wasteland', 'sheep', 'castle']
 MAXWIDTH = 5
 CASTLE_COORDS = (4, 4)
@@ -5,12 +13,14 @@ CASTLE_ADJ_COORDS = [(4, 3), (4, 5), (3, 4), (5, 4)]
 
 COORD_MAP = {}
 
-for i in range(9):
-    for j in range(9):
+counter = 0
+for i in range(-4, 5):
+    for j in range(-4, 5):
         # Number gridpoints with integers
-        COORD_MAP.update({(j, i): i * 9 + j})
+        COORD_MAP.update({(j, i): counter})
+        counter += 1
 
-REV_COORD_MAP = {v: k for k,v in COORD_MAP.items()}
+REV_COORD_MAP = {v: k for k, v in COORD_MAP.items()}
 
 
 class Side(object):
@@ -103,7 +113,11 @@ class Board(object):
         self.castle_coords = ()
         self.place_castle()
 
-    def place_castle(self, castle_coords=(4, 4)):
+    def show(self):
+        print(self.make_visual_board())
+
+    def place_castle(self):
+        castle_coords = (0, 0)  # It's at the center
         self.castle_coords = castle_coords
         self.B[castle_coords] = Side(kings=0, terrain='castle')
         for iBump, jBump in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
@@ -112,28 +126,15 @@ class Board(object):
     def __getitem__(self, ij):
         return self.B[ij]
 
-    def undo_move(self, move):
-        #  TODO: Need to remove edge list or junk edge list entirely
-        #  TODO: This function entirely untested. Use at your own risk!
-        self.B.pop(move.i, move.j)
-        self.B.pop(move.i2, move.j2)
-        self.update_max_min()
-        positions = [move.i, move.j, move.i2, move.j2]
-        for p in positions:
-            if p in self.Graph.keys():
-                self.Graph.pop(p)
-        for k in self.Graph.keys():
-            vals = set()
-            for v in self.Graph[k]:
-                if v not in positions:
-                    vals.add(v)
-            self.Graph[k] = vals
-
     def assign_domino(self, move):
         if self.check_move_validity(move):
             self.B[move.i, move.j] = move.side_a
             self.B[move.i2, move.j2] = move.side_b
-            self.record_external_edge_formation(move)
+            try:
+                self.record_external_edge_formation(move)
+            except:
+                print(move, self.B.keys())
+                assert False, 'Crashed'
             self.update_max_min(move)
             if move.side_a.terrain == move.side_b.terrain:
                 # Record internal edge if both sides of domino have same terrain
@@ -147,6 +148,7 @@ class Board(object):
             return False
 
     def update_graph(self, move, edge=None):
+        """ Add node and edge to graph."""
         m1 = COORD_MAP[move.i, move.j]
         m2 = COORD_MAP[move.i2, move.j2]
 
@@ -174,12 +176,14 @@ class Board(object):
                 if m2 not in self.Graph.keys():
                     self.Graph.update({m2: set()})
         else:
+            # No edge provided, just add the node.
             if m1 not in self.Graph.keys():
                 self.Graph.update({m1: set()})
             if m2 not in self.Graph.keys():
                 self.Graph.update({m2: set()})
 
     def update_max_min(self, move=None):
+        """ Keep track of largest and least i and j to ensure grid fits into 5x5 square"""
         if move is not None:
             if self.iMax is None:
                 self.iMax = max(move.i, move.i2)
@@ -211,28 +215,30 @@ class Board(object):
             self.iMin = min(i_s)
             self.jMin = min(j_s)
 
-    def check_max_min(self, move):
-        # Make sure the move doesn't expand board too wide/long.
+    def check_if_grid_within_width_limits(self, move):
+        """ Make sure the move doesn't expand board too wide/long. Return True if OK."""
+
+        ci, cj = self.castle_coords
 
         if self.iMax is None:
-            iMax = max(move.i, move.i2)
+            iMax = max(move.i, move.i2, ci)
         else:
-            iMax = max(self.iMax, move.i, move.i2)
+            iMax = max(self.iMax, move.i, move.i2, ci)
 
         if self.jMax is None:
-            jMax = max(move.j, move.j2)
+            jMax = max(move.j, move.j2, cj)
         else:
-            jMax = max(self.jMax, move.j, move.j2)
+            jMax = max(self.jMax, move.j, move.j2, cj)
 
         if self.iMin is None:
-            iMin = min(move.i, move.i2)
+            iMin = min(move.i, move.i2, ci)
         else:
-            iMin = min(self.iMin, move.i, move.i2)
+            iMin = min(self.iMin, move.i, move.i2, ci)
 
         if self.jMin is None:
-            jMin = min(move.j, move.j2)
+            jMin = min(move.j, move.j2, cj)
         else:
-            jMin = min(self.jMin, move.j, move.j2)
+            jMin = min(self.jMin, move.j, move.j2, cj)
 
         if iMax - iMin >= MAXWIDTH:
             return False
@@ -250,7 +256,9 @@ class Board(object):
         return False
 
     def check_external_edge_formation(self, move):
-        # Just have to check the 3 adjacencies to given move, (4th is same domino)
+        """ See if the newly placed domino forms an edge with an existing tile. Castle adjacency doesn't count.
+        Just have to check the 3 adjacencies for each Domino Side, (4th is same domino)"""
+
         for step in [(1, 0), (0, 1), (-1, 0), (0, -1)]:
             if (move.Di, move.Dj) != step:
                 step_i = move.i + step[0]
@@ -271,6 +279,7 @@ class Board(object):
         return False
 
     def record_external_edge_formation(self, move):
+        """ Near re-write of function above (can be consolidated via separate function). This time, records."""
         for step in [(1, 0), (0, 1), (-1, 0), (0, -1)]:
             if (move.Di, move.Dj) != step:
                 step_i = move.i + step[0]
@@ -300,14 +309,6 @@ class Board(object):
         return False
 
     def check_move_validity(self, move):
-        if move.i < 0 or move.i2 < 0:
-            return False
-        if move.j < 0 or move.j2 < 0:
-            return False
-        if move.i > 8 or move.i2 > 8:
-            return False
-        if move.j > 8 or move.j2 > 8:
-            return False
         if (move.Di == 0) and (move.Dj == 0):
             return False
         if max(move.Di, move.Dj) > 1:
@@ -318,19 +319,21 @@ class Board(object):
             return False
         if (move.i2, move.j2) in self.B.keys():
             return False
-        if (move.i, move.j) == (4, 4):
+        if (move.i, move.j) == self.castle_coords:
             return False
-        if (move.i2, move.j2) == (4, 4):
+        if (move.i2, move.j2) == self.castle_coords:
             return False
+        if not self.check_if_grid_within_width_limits(move):
+            return False
+        if self.check_castle_adjacency(move):
+            return True
+        if self.check_external_edge_formation(move):
+            return True
 
-        if self.check_max_min(move):
-            if self.check_castle_adjacency(move):
-                return True
-            if self.check_external_edge_formation(move):
-                return True
         return False
 
     def find_connected_components(self):
+        """ Wraps depth-first-search to find all connected components of graphs (ie: n water sides adjacent)."""
         connected_components = []
         for key in self.Graph.keys():
             for group in connected_components:
@@ -341,7 +344,8 @@ class Board(object):
         self.connected_components = connected_components
 
     def dfs(self, graph, start, visited=None):
-        # Depth-first search for finding connected components to start node
+        """ Depth-first search for finding connected components to start node. Uses graph, which is dict valued by
+        edge adjacencies, keyed by node."""
         if visited is None:
             visited = set()
         visited.add(start)
@@ -364,24 +368,31 @@ class Board(object):
         return total_score
 
     def get_feasible_move_set(self, domino):
-        """
-        Returns all moves that are valid, given self and domino
-        """
-        assert isinstance(domino, Domino), 'Please pass a king domino domino object.'
+        """ Returns all moves that are valid, given self and domino """
+        assert isinstance(domino, Domino), 'Please pass a king domino "Domino" object.'
 
         feasible_set = set()
         for coords, side in self.B.items():
             i_existing = coords[0]
             j_existing = coords[1]
-            for iBump, jBump in [(1, 0), (-1, 0), (0, 1), (0, -1)]:  # Test all adjacencies to each side
+            for iBump, jBump in [(1, 0), (-1, 0), (0, 1), (0, -1)]:  # Test all adjacencies to each existing side
 
                 i = i_existing + iBump
                 j = j_existing + jBump
                 for Di, Dj in [(1, 0), (-1, 0), (0, 1), (0, -1)]:  # Test all rotations
-                    candidate_move = Move(domino, 0, i, j, Di, Dj)
+                    candidate_move = Move(domino=domino, first_side=0, i=i, j=j, Di=Di, Dj=Dj)
                     if self.check_move_validity(candidate_move):
                         feasible_set.add(candidate_move)
         return feasible_set
+
+    def make_visual_board(self):
+        visual_board = DataFrame(index=[x for x in range(-5, 4)], columns=[x for x in range(-5, 4)])
+        for k, v in self.B.items():
+            visual_board.loc[k[0], k[1]] = v
+            visual_board = visual_board.sort_index()
+        visual_board = visual_board[sorted(visual_board.columns)]
+
+        return visual_board
 
 
 class Move(object):
@@ -420,8 +431,56 @@ class Move(object):
         return hash((self.side_a, self.side_b, self.i, self.j, self.Di, self.Dj))
 
     def __repr__(self):
-        return '(i , j ): (%d, %d) - %s \t(i2, j2): (%d, %d) - %s\n' % (self.i, self.j, self.side_a.terrain,
-                                                                         self.i2, self.j2, self.side_b.terrain)
+        return '(%d, %d):%s / %d \t(%d, %d):%s / %d\n' % (self.i, self.j, self.side_a.terrain,
+                                                                                  self.side_a.kings,
+                                                                                  self.i2, self.j2, self.side_b.terrain,
+                                                                                  self.side_b.kings)
+
+
+class MonteCarloKingDominoThinker(object):
+
+    def __init__(self, board, remaining_dominos, think_time=10):
+        assert isinstance(board, Board)
+        self.board = board
+        self.remaining_dominos = remaining_dominos
+        self.think_time = think_time  # seconds per move
+        self.n_processes = 16
+        self.short_term_memory = {}
+
+    def single_playout(self, board):
+        """ Make random moves to finish game and then return score."""
+        bc = copy.deepcopy(board)
+        next_domino = random.sample(self.remaining_dominos, k=1)[0]
+        feasible_moves = board.get_feasible_move_set(next_domino)
+        if len(feasible_moves) > 0:
+            next_mv = random.sample(feasible_moves, k=1)[0]
+            board.assign_domino(next_mv)
+
+        return board.score_kings()
+
+    def think_about_a_move(self, mv, thinking_time):
+        """ Make a move and then take average of random playouts from that point."""
+        bc = copy.deepcopy(self.board)
+        bc.assign_domino(mv)
+        time_allows = True
+        k = 0
+        score = 0
+        now = time.time()
+        while (time.time() - now) < 1:
+            score += self.single_playout(bc)
+            k += 1
+
+        avg_score = float(score) / k
+        return mv, avg_score
+
+    def think_about_set_of_moves(self, feasible_set):
+        n = len(feasible_set)
+        print('number of feasible moves: %d' % n)
+        thinking_time_per_move = self.think_time / float(n)
+        f = partial(self.think_about_a_move, thinking_time=thinking_time_per_move)
+        with Pool(cpu_count()) as p:
+            out = dict(p.map(f, feasible_set))
+        return out
 
 
 if __name__ == '__main__':
