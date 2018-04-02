@@ -7,7 +7,7 @@ if __name__ == '__main__':
     myBoard = kD.Board()
 
     # Place some moves first
-    N = 0
+    N = 4
     # random.seed(0)
     dom_set = set(DOMINO_LIB)
     doms = random.sample(DOMINO_LIB, len(DOMINO_LIB))

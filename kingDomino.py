@@ -437,6 +437,15 @@ class Move(object):
                                                                                   self.side_b.kings)
 
 
+class Game(object):
+    def __init__(self, number_of_players=2):
+        self.number_of_players = number_of_players
+        self.boards = {}
+        self.turn = 0  # 1, 2, 3 or 4 for given player's turn
+        for p in range(number_of_players):
+            self.boards[p] = Board()
+        
+
 class MonteCarloKingDominoThinker(object):
 
     def __init__(self, board, remaining_dominos, think_time=10):
