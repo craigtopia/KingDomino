@@ -6,7 +6,9 @@ import time
 import random
 import copy
 
+# Move below to statics file?
 TERRAINS = ['wheat', 'water', 'forest', 'cave', 'wasteland', 'sheep', 'castle']
+
 MAXWIDTH = 5
 CASTLE_COORDS = (4, 4)
 CASTLE_ADJ_COORDS = [(4, 3), (4, 5), (3, 4), (5, 4)]
@@ -89,6 +91,12 @@ class Domino(object):
         if self.__eq__(other):
             return False
         return True
+
+    def __lt__(self, other):
+        if self.number < other.number:
+            return True
+        else:
+            return False
 
     def get_other_side(self, side):
         if side == self.one_side:
