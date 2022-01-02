@@ -1,4 +1,5 @@
 import random
+import copy
 from domino_library import DOMINO_LIB
 
 
@@ -21,9 +22,8 @@ class Game(object):
 
     Setup:
         1. Generate Menu
-        2. Generate domino-selection order   *** this is the step I'm on!
-        3. Select dominoes
-        4. Generate new Menu (two will display at once: selected Menu (old) / unselected Menu (new))
+      **2. Select dominoes
+        3. Generate new Menu (two will display at once: selected Menu (old) / unselected Menu (new))
 
     Turn:
         For each domino in Old Menu:
@@ -79,12 +79,13 @@ class Game(object):
         """
         Grab dominoes from box
         """
-        draw = self.dominoes_in_box[:self.n_dominoes_on_menu]
-        draw.sort()
+        self.old_menu = copy.copy(self.new_menu)
+        self.new_menu = self.dominoes_in_box[:self.n_dominoes_on_menu]
+        self.new_menu.sort()
 
         self.dominoes_in_box = self.dominoes_in_box[self.n_dominoes_on_menu:]
 
-        return draw
+
 
     def setup(self):
         """
